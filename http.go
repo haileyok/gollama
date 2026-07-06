@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	maxRetries = 5
-	baseDelay  = 5 * time.Second
+	defaultMaxRetries = 5
+	baseDelay         = 5 * time.Second
 )
 
 // isRetryableStatus returns true for status codes that should trigger a retry.
@@ -24,6 +24,7 @@ func isRetryableStatus(code int) bool {
 // The newReq function is called on each attempt to produce a fresh *http.Request
 // (necessary for POST bodies, which are consumed on each attempt).
 func (c *Client) doWithRetry(newReq func() (*http.Request, error)) (*http.Response, error) {
+	maxRetries := c.effectiveMaxRetries()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := newReq()
 		if err != nil {
