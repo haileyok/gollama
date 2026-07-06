@@ -61,3 +61,41 @@ func (c *Client) Turn(opts RequestOptions) (*ResponseMessageGenerate, error) {
 	opts.Stream = false
 	return c.ChatCompletion(opts)
 }
+
+// TurnStream is the streaming counterpart to Turn: it runs a single model turn
+// while delivering the assistant's text incrementally through onDelta, then
+// returns the same normalized ResponseMessageGenerate that Turn would return for
+// the same options. Callers never have to branch per provider — a turn that
+// cannot stream natively still returns a correct final message.
+//
+// CONTRACT: onDelta receives SNAPSHOTS — the full accumulated assistant text so
+// far — NOT increments. It is invoked serially (never concurrently with itself)
+// for a single TurnStream call, and may be called zero times (e.g. a turn that
+// produces only tool calls). Snapshot semantics make lossy/throttled delivery
+// safe: a consumer can drop intermediate snapshots and simply replace its live
+// tail with the latest one. onDelta may be nil.
+//
+// Backend support: Anthropic streams natively via the Messages SSE API. Every
+// other backend (OpenAI-compatible, Ollama, Bedrock) falls back gracefully — it
+// runs a blocking Turn and, if that yields non-empty assistant text, delivers
+// the whole text as a single snapshot delta. Native streaming for those
+// backends is a follow-up; the fallback keeps callers uniform in the meantime.
+func (c *Client) TurnStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
+	if c.Backend() == BackendAnthropic {
+		return c.chatCompletionAnthropicStream(opts, onDelta)
+	}
+
+	// Fallback: no native streaming for this backend. Run a blocking turn and
+	// deliver the whole assistant text as a single snapshot so callers need not
+	// branch.
+	resp, err := c.Turn(opts)
+	if err != nil {
+		return nil, err
+	}
+	if onDelta != nil && len(resp.Choices) > 0 {
+		if text := resp.Choices[0].Message.Content; text != "" {
+			onDelta(text)
+		}
+	}
+	return resp, nil
+}

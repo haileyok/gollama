@@ -17,6 +17,7 @@ type anthropicRequest struct {
 	Tools        []anthropicTool        `json:"tools,omitempty"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	Stream       bool                   `json:"stream,omitempty"`
 }
 
 // anthropicThinking configures extended/adaptive reasoning. Type is "adaptive"
@@ -505,7 +506,17 @@ func parseAnthropicResponse(resp *http.Response) (*ResponseMessageGenerate, erro
 	if err := json.NewDecoder(resp.Body).Decode(&antResp); err != nil {
 		return nil, fmt.Errorf("error decoding Anthropic response: %w", err)
 	}
+	return convertAnthropicResponse(&antResp), nil
+}
 
+// convertAnthropicResponse normalizes a decoded anthropicResponse into the
+// standard ResponseMessageGenerate shape. It is the single source of truth for
+// that conversion, shared by the non-streaming path (parseAnthropicResponse) and
+// the streaming path (chatCompletionAnthropicStream, which assembles an
+// anthropicResponse from the SSE event stream). Using one converter guarantees
+// that a streamed turn's final message is byte-equivalent to the non-streaming
+// shape for the same response.
+func convertAnthropicResponse(antResp *anthropicResponse) *ResponseMessageGenerate {
 	result := &ResponseMessageGenerate{
 		Model:      antResp.Model,
 		StopReason: antResp.StopReason,
@@ -560,7 +571,7 @@ func parseAnthropicResponse(resp *http.Response) (*ResponseMessageGenerate, erro
 	result.Choices[0].Message.Thinking = thinkingText.String()
 	result.Choices[0].Message.ThinkingBlocks = thinkingBlocks
 
-	return result, nil
+	return result
 }
 
 // ChatCompletionAnthropic sends a request using Anthropic's native API format with caching support.
