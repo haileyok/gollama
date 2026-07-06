@@ -26,13 +26,31 @@ type RequestOptions struct {
 	Messages     []Message     `json:"messages,omitempty"`
 	Options      *Options      `json:"options,omitempty"`
 	Think        bool          `json:"think,omitempty"`
+	// Thinking, Effort, and ThinkingDisplay are the backend-agnostic reasoning
+	// controls. Each backend expresses reasoning differently; Turn/ChatCompletion
+	// translate these fields into the right request shape per backend:
+	//
+	//   - Anthropic: Thinking="adaptive" sets thinking{type:"adaptive"}; Effort
+	//     ("low".."max") sets output_config.effort; ThinkingDisplay selects
+	//     summarized vs. omitted thinking. Response thinking/redacted_thinking
+	//     blocks are parsed into Message.Thinking + Message.ThinkingBlocks.
+	//   - OpenAI-compatible (OpenAI, GLM, etc.): Effort maps to the
+	//     reasoning_effort request field ("low"|"medium"|"high"|"xhigh",
+	//     model-dependent; "max" clamps to "xhigh"). Thinking has no request
+	//     equivalent (effort is the knob) and is not sent.
+	//   - Ollama: on/off only. Think, or any non-empty Thinking, sets the "think"
+	//     bool; Effort levels are inexpressible and ignored.
+	//   - Bedrock: not translated (ignored).
+	//
 	// Thinking, set to "adaptive", enables Anthropic extended/adaptive reasoning
-	// (distinct from Think, the Ollama on/off flag); empty leaves it off. Ignored
-	// by non-Anthropic backends.
+	// (distinct from Think, the Ollama on/off flag); empty leaves it off. On
+	// Ollama a non-empty value simply turns thinking on.
 	Thinking string `json:"-"`
 	// Effort controls reasoning depth and overall token spend on backends that
-	// support it (Anthropic output_config.effort): "low" | "medium" | "high" |
-	// "xhigh" | "max". Empty uses the provider default.
+	// support it: "low" | "medium" | "high" | "xhigh" | "max". Anthropic maps it
+	// to output_config.effort; OpenAI-compatible backends map it to
+	// reasoning_effort ("max" clamps to "xhigh"). Ignored by Ollama (on/off only)
+	// and Bedrock. Empty uses the provider default.
 	Effort string `json:"-"`
 	// ThinkingDisplay selects whether thinking summaries are returned
 	// ("summarized") or omitted (the provider default). Anthropic only.
@@ -100,6 +118,11 @@ type Message struct {
 	Content          string `json:"content"`
 	Thinking         string `json:"thinking,omitempty"`
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Reasoning captures the OpenAI-compatible reasoning field (Ollama's /v1
+	// endpoint returns reasoning text here). ChatCompletion folds it into
+	// Thinking after decode and clears it, so it is empty on assistant-turn
+	// replay and never re-emitted (omitempty).
+	Reasoning string `json:"reasoning,omitempty"`
 	// ThinkingBlocks carries provider reasoning blocks (Anthropic) verbatim so an
 	// assistant turn can be replayed with its thinking intact. Not serialized here;
 	// the Anthropic request builder emits them as leading content blocks.

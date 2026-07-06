@@ -29,15 +29,35 @@ func (c *Client) ListModels() ([]ModelDesc, error) {
 // Generation parameters are top-level per the OpenAI spec; the nested Options field is
 // kept for Ollama-compatible backends that expect it.
 type openaiRequest struct {
-	Model       string      `json:"model"`
-	Tools       []ToolParam `json:"tools,omitempty"`
-	ToolChoice  string      `json:"tool_choice,omitempty"`
-	Messages    []Message   `json:"messages"`
-	Stream      bool        `json:"stream,omitempty"`
-	MaxTokens   int         `json:"max_tokens,omitempty"`
-	Temperature *float64    `json:"temperature,omitempty"`
-	TopP        *float64    `json:"top_p,omitempty"`
-	Options     *Options    `json:"options,omitempty"`
+	Model string      `json:"model"`
+	Tools []ToolParam `json:"tools,omitempty"`
+	// ReasoningEffort is the OpenAI-compatible reasoning knob
+	// ("low"|"medium"|"high"|"xhigh", model-dependent). Set only for the OpenAI
+	// backend from RequestOptions.Effort; never sent to Ollama.
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	ToolChoice      string    `json:"tool_choice,omitempty"`
+	Messages        []Message `json:"messages"`
+	Stream          bool      `json:"stream,omitempty"`
+	MaxTokens       int       `json:"max_tokens,omitempty"`
+	Temperature     *float64  `json:"temperature,omitempty"`
+	TopP            *float64  `json:"top_p,omitempty"`
+	Options         *Options  `json:"options,omitempty"`
+	// Think is Ollama's on/off reasoning flag. Set only for the Ollama backend
+	// (from RequestOptions.Think or a non-empty Thinking); Ollama exposes no
+	// effort levels, so RequestOptions.Effort is deliberately dropped there.
+	Think bool `json:"think,omitempty"`
+}
+
+// mapOpenAIEffort translates a gollama Effort level into the value OpenAI's
+// reasoning_effort field accepts. gollama levels are low|medium|high|xhigh|max;
+// OpenAI documents none|minimal|low|medium|high|xhigh (model-dependent). "max"
+// has no OpenAI equivalent, so it clamps to the highest expressible level,
+// "xhigh"; anything else passes through unchanged.
+func mapOpenAIEffort(effort string) string {
+	if effort == "max" {
+		return "xhigh"
+	}
+	return effort
 }
 
 // ChatCompletion sends a chat completion request.
@@ -121,6 +141,23 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 		}
 	}
 
+	// Translate reasoning controls per backend. Both backends flow through this
+	// OpenAI-compatible path, but they express reasoning differently:
+	//   - OpenAI: a reasoning_effort level (from Effort; "max" clamps to xhigh).
+	//     There is no OpenAI request equivalent for Thinking — Effort is the knob.
+	//   - Ollama: a think on/off bool only (no effort levels). It is enabled when
+	//     Think is set or an adaptive Thinking is requested; Effort is ignored.
+	switch c.Backend() {
+	case BackendOllama:
+		if opts.Think || opts.Thinking != "" {
+			req.Think = true
+		}
+	default: // BackendOpenAI and other OpenAI-compatible endpoints
+		if opts.Effort != "" {
+			req.ReasoningEffort = mapOpenAIEffort(opts.Effort)
+		}
+	}
+
 	if opts.Stream {
 		return nil, fmt.Errorf("streaming not yet supported for OpenAI-compatible endpoints")
 	}
@@ -154,6 +191,19 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 	var response ResponseMessageGenerate
 	if err := decoder.Decode(&response); err != nil {
 		return nil, fmt.Errorf("error decoding response: %w", err)
+	}
+
+	// Normalize reasoning into the single Message.Thinking field. Ollama's /v1
+	// endpoint returns reasoning text in message.reasoning; fold it into Thinking
+	// (when Thinking is empty) so callers read one field regardless of backend,
+	// matching the Anthropic path. Clear Reasoning afterward so assistant-turn
+	// replay never re-emits a provider-specific reasoning key.
+	if len(response.Choices) > 0 {
+		msg := &response.Choices[0].Message
+		if msg.Thinking == "" && msg.Reasoning != "" {
+			msg.Thinking = msg.Reasoning
+		}
+		msg.Reasoning = ""
 	}
 
 	return &response, nil

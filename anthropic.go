@@ -180,8 +180,10 @@ func buildAnthropicRequest(opts RequestOptions) (*anthropicRequest, error) {
 		req.MaxTokens = opts.Options.MaxTokens
 	}
 
-	// Extended/adaptive thinking + effort (Anthropic-native). Other backends
-	// ignore opts.Thinking/Effort; they are only translated here.
+	// Extended/adaptive thinking + effort (Anthropic-native). OpenAI-compatible
+	// backends translate Effort into reasoning_effort and Ollama into a think
+	// bool in the openai.go path; here we emit Anthropic's thinking +
+	// output_config.effort.
 	if opts.Thinking != "" {
 		th := &anthropicThinking{Type: opts.Thinking}
 		if opts.ThinkingDisplay != "" {
