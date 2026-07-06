@@ -75,19 +75,29 @@ func (c *Client) Turn(opts RequestOptions) (*ResponseMessageGenerate, error) {
 // safe: a consumer can drop intermediate snapshots and simply replace its live
 // tail with the latest one. onDelta may be nil.
 //
-// Backend support: Anthropic streams natively via the Messages SSE API. Every
-// other backend (OpenAI-compatible, Ollama, Bedrock) falls back gracefully — it
-// runs a blocking Turn and, if that yields non-empty assistant text, delivers
-// the whole text as a single snapshot delta. Native streaming for those
-// backends is a follow-up; the fallback keeps callers uniform in the meantime.
+// Backend support: Anthropic streams natively via the Messages SSE API.
+// OpenAI-compatible endpoints and Ollama also stream natively over the
+// /chat/completions chunk stream — Ollama is routed through its
+// OpenAI-compatible /v1 endpoint (the same path Turn uses), so no Ollama-native
+// /api/chat streaming is required. Bedrock has no streaming path here and falls
+// back gracefully: it runs a blocking Turn and, if that yields non-empty
+// assistant text, delivers the whole text as a single snapshot delta. The
+// fallback keeps callers uniform for backends without native SSE.
 func (c *Client) TurnStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
-	if c.Backend() == BackendAnthropic {
+	switch c.Backend() {
+	case BackendAnthropic:
 		return c.chatCompletionAnthropicStream(opts, onDelta)
+	case BackendBedrock:
+		return c.turnStreamFallback(opts, onDelta)
+	default: // BackendOpenAI, BackendOllama
+		return c.chatCompletionOpenAIStream(opts, onDelta)
 	}
+}
 
-	// Fallback: no native streaming for this backend. Run a blocking turn and
-	// deliver the whole assistant text as a single snapshot so callers need not
-	// branch.
+// turnStreamFallback implements TurnStream for backends without a native SSE
+// path: it runs a blocking Turn and, if that yields non-empty assistant text,
+// delivers the whole text as a single snapshot delta so callers need not branch.
+func (c *Client) turnStreamFallback(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
 	resp, err := c.Turn(opts)
 	if err != nil {
 		return nil, err

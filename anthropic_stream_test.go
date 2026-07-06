@@ -161,9 +161,13 @@ func TestTurnStreamAnthropic_RichStream(t *testing.T) {
 	}
 }
 
-// TestTurnStreamFallback verifies that a non-Anthropic backend falls back to a
+// TestTurnStreamFallback verifies the turnStreamFallback helper (used by
+// TurnStream for backends without a native SSE path, i.e. Bedrock): it runs a
 // blocking turn and delivers the whole text as exactly one snapshot delta, with
-// a result identical to Turn.
+// a result identical to Turn. It is exercised against a mock /chat/completions
+// server because Bedrock itself needs AWS credentials and is not mockable
+// offline; the routing line (BackendBedrock -> turnStreamFallback) is covered by
+// inspection.
 func TestTurnStreamFallback(t *testing.T) {
 	const respJSON = `{"model":"gpt-x","choices":[{"index":0,"message":{"role":"assistant","content":"the whole answer"}}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,16 +180,13 @@ func TestTurnStreamFallback(t *testing.T) {
 
 	c := NewClient(srv.URL) // default OpenAI-compatible backend
 	c.SetMaxRetries(0)
-	if c.Backend() != BackendOpenAI {
-		t.Fatalf("expected OpenAI backend, got %v", c.Backend())
-	}
 
 	opts := RequestOptions{Model: "gpt-x", Messages: []Message{{Role: "user", Content: "hi"}}}
 
 	var snaps []string
-	streamed, err := c.TurnStream(opts, func(text string) { snaps = append(snaps, text) })
+	streamed, err := c.turnStreamFallback(opts, func(text string) { snaps = append(snaps, text) })
 	if err != nil {
-		t.Fatalf("TurnStream: %v", err)
+		t.Fatalf("turnStreamFallback: %v", err)
 	}
 	if len(snaps) != 1 {
 		t.Fatalf("expected exactly 1 fallback delta, got %d: %v", len(snaps), snaps)

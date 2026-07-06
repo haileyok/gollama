@@ -42,10 +42,20 @@ type openaiRequest struct {
 	Temperature     *float64  `json:"temperature,omitempty"`
 	TopP            *float64  `json:"top_p,omitempty"`
 	Options         *Options  `json:"options,omitempty"`
+	// StreamOptions is set only when Stream is true. include_usage asks the
+	// server to emit a final chunk carrying token usage (supported by OpenAI,
+	// Ollama's /v1 endpoint, llama.cpp, and vLLM); without it many servers omit
+	// usage entirely from a streamed response.
+	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
 	// Think is Ollama's on/off reasoning flag. Set only for the Ollama backend
 	// (from RequestOptions.Think or a non-empty Thinking); Ollama exposes no
 	// effort levels, so RequestOptions.Effort is deliberately dropped there.
 	Think bool `json:"think,omitempty"`
+}
+
+// openaiStreamOptions is the stream_options object for streaming requests.
+type openaiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // mapOpenAIEffort translates a gollama Effort level into the value OpenAI's
@@ -60,21 +70,16 @@ func mapOpenAIEffort(effort string) string {
 	return effort
 }
 
-// ChatCompletion sends a chat completion request.
-// If connected to Anthropic's API, uses the native /v1/messages endpoint with caching.
-// Otherwise, uses the OpenAI-compatible /chat/completions endpoint.
-// Returns a ResponseMessageGenerate with choices and usage information.
-func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, error) {
-	// Use AWS Bedrock endpoint
-	if c.IsBedrockAPI() {
-		return c.ChatCompletionBedrock(opts)
-	}
-
-	// Use native Anthropic API for caching support
-	if c.IsAnthropicAPI() {
-		return c.ChatCompletionAnthropic(opts)
-	}
-
+// buildOpenAIRequest constructs the final request body for the OpenAI-compatible
+// /chat/completions endpoint from opts. It performs system-message injection,
+// tool-parameter normalization, top-level option promotion, per-backend reasoning
+// translation (Ollama think bool vs OpenAI reasoning_effort), and the ExtraBody
+// merge. The returned value is the exact body sent by both the non-streaming
+// (ChatCompletion) and streaming (chatCompletionOpenAIStream) paths, so requests
+// are byte-identical apart from opts.Stream and its stream_options. When
+// opts.Stream is set, stream_options{include_usage:true} is added so the server
+// emits a final usage chunk.
+func (c *Client) buildOpenAIRequest(opts RequestOptions) (any, error) {
 	// For OpenAI-compatible APIs, inject system prompt as a system-role message
 	// at the front of the messages array. SystemBlocks takes priority over System string.
 	messages := opts.Messages
@@ -127,6 +132,9 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 		Stream:     opts.Stream,
 		Options:    opts.Options,
 	}
+	if opts.Stream {
+		req.StreamOptions = &openaiStreamOptions{IncludeUsage: true}
+	}
 
 	// Promote Options to top-level fields for OpenAI-compatible backends
 	if opts.Options != nil {
@@ -158,12 +166,7 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 		}
 	}
 
-	if opts.Stream {
-		return nil, fmt.Errorf("streaming not yet supported for OpenAI-compatible endpoints")
-	}
-
-	// If ExtraBody is set, merge its keys into the request as top-level fields
-	var body any = req
+	// If ExtraBody is set, merge its keys into the request as top-level fields.
 	if len(opts.ExtraBody) > 0 {
 		raw, err := json.Marshal(req)
 		if err != nil {
@@ -176,7 +179,30 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 		for k, v := range opts.ExtraBody {
 			merged[k] = v
 		}
-		body = merged
+		return merged, nil
+	}
+
+	return req, nil
+}
+
+// ChatCompletion sends a chat completion request.
+// If connected to Anthropic's API, uses the native /v1/messages endpoint with caching.
+// Otherwise, uses the OpenAI-compatible /chat/completions endpoint.
+// Returns a ResponseMessageGenerate with choices and usage information.
+func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, error) {
+	// Use AWS Bedrock endpoint
+	if c.IsBedrockAPI() {
+		return c.ChatCompletionBedrock(opts)
+	}
+
+	// Use native Anthropic API for caching support
+	if c.IsAnthropicAPI() {
+		return c.ChatCompletionAnthropic(opts)
+	}
+
+	body, err := c.buildOpenAIRequest(opts)
+	if err != nil {
+		return nil, err
 	}
 
 	// Set up request for OpenAI-compatible endpoint

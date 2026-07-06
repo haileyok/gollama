@@ -2,6 +2,7 @@ package gollama
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,6 +114,38 @@ func TestOllamaThinkingLive_ToolRoundTrip(t *testing.T) {
 		t.Fatalf("turn 2 (tool round-trip with thinking on): %v", err)
 	}
 	t.Logf("turn2 text=%q", resp2.Choices[0].Message.Content)
+}
+
+// TestOllamaTurnStreamLive verifies that TurnStream against a live Ollama daemon
+// streams natively over the OpenAI-compatible /v1 endpoint: onDelta receives
+// monotonically growing snapshots whose last value equals the final assistant
+// text. Skips cleanly when no local Ollama is reachable.
+func TestOllamaTurnStreamLive(t *testing.T) {
+	c := liveOllamaClient(t)
+
+	var snaps []string
+	resp, err := c.TurnStream(RequestOptions{
+		Model:    ollamaLiveModel,
+		Messages: []Message{{Role: "user", Content: "Say hello in one short sentence."}},
+		Options:  &Options{MaxTokens: 256},
+	}, func(text string) { snaps = append(snaps, text) })
+	if err != nil {
+		t.Fatalf("TurnStream: %v", err)
+	}
+
+	final := resp.Choices[0].Message.Content
+	t.Logf("snapshots=%d final=%q", len(snaps), final)
+	if final == "" {
+		t.Fatalf("expected non-empty streamed assistant text")
+	}
+	for i := 1; i < len(snaps); i++ {
+		if !strings.HasPrefix(snaps[i], snaps[i-1]) {
+			t.Errorf("snapshot %d %q is not a prefix-extension of %q", i, snaps[i], snaps[i-1])
+		}
+	}
+	if len(snaps) > 0 && snaps[len(snaps)-1] != final {
+		t.Errorf("last snapshot %q != final content %q", snaps[len(snaps)-1], final)
+	}
 }
 
 // runOllamaHistoryReplaySmoke runs two sequential thinking-on turns where the
