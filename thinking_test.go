@@ -94,7 +94,8 @@ func TestBuildAnthropicRequest_ReplaysThinkingBlocks(t *testing.T) {
 	if !ok {
 		t.Fatalf("first content block is %T, want thinking block first", asst.Content[0])
 	}
-	if first.Type != "thinking" || first.Thinking != "2+3=5" || first.Signature != "sig-abc" {
+	if first.Type != "thinking" || first.Thinking == nil || *first.Thinking != "2+3=5" ||
+		first.Signature != "sig-abc" {
 		t.Fatalf("thinking block = %+v", first)
 	}
 	// Block 1 must be the redacted thinking block.
@@ -190,5 +191,65 @@ func TestParseAnthropicResponse_ThinkingTokens(t *testing.T) {
 	}
 	if got := convertAnthropicResponse(&antResp2).Usage.ThinkingTokens; got != 0 {
 		t.Fatalf("thinking tokens = %d, want 0 when details are absent", got)
+	}
+}
+
+// TestBuildAnthropicRequest_EmptyThinkingStillEmitted covers the default display
+// mode. When display is "omitted", the API returns a signed thinking block with no
+// summary text — but still requires the "thinking" field when that block is echoed
+// back, so it must serialize as "" rather than being dropped. A plain string with
+// omitempty produced:
+//
+//	400 messages.1.content.0.thinking.thinking: Field required
+func TestBuildAnthropicRequest_EmptyThinkingStillEmitted(t *testing.T) {
+	req, err := buildAnthropicRequest(RequestOptions{
+		Model: "claude-opus-5",
+		Messages: []Message{
+			{Role: "user", Content: "hi"},
+			{
+				Role:           "assistant",
+				ThinkingBlocks: []ThinkingBlock{{Signature: "sig-only"}},
+				ToolCalls: []ToolCall{{
+					ID:       "call_1",
+					Function: ToolCallFunction{Name: "noop", Arguments: "{}"},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "ok"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"thinking":""`) {
+		t.Fatalf(`replayed block must carry "thinking":"" even when empty: %s`, b)
+	}
+	if !strings.Contains(string(b), `"signature":"sig-only"`) {
+		t.Fatalf("signature lost: %s", b)
+	}
+
+	// A redacted block must NOT gain an empty thinking field.
+	req2, err := buildAnthropicRequest(RequestOptions{
+		Model: "claude-opus-5",
+		Messages: []Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", ThinkingBlocks: []ThinkingBlock{{Redacted: "opaque"}}, Content: "done"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := json.Marshal(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b2), `"thinking"`) {
+		t.Fatalf("redacted block must not carry a thinking field: %s", b2)
+	}
+	if !strings.Contains(string(b2), `"data":"opaque"`) {
+		t.Fatalf("redacted payload lost: %s", b2)
 	}
 }

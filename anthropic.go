@@ -39,10 +39,16 @@ type anthropicOutputConfig struct {
 // on a follow-up request. Anthropic verifies the signature, so it must be sent
 // unchanged. Redacted blocks use Type "redacted_thinking" + Data.
 type anthropicThinkingReqBlock struct {
-	Type      string `json:"type"`
-	Thinking  string `json:"thinking,omitempty"`
-	Signature string `json:"signature,omitempty"`
-	Data      string `json:"data,omitempty"`
+	Type string `json:"type"`
+	// Thinking is a pointer so an empty-but-present value survives. When display
+	// is "omitted" (the default on current models) the API returns a signed block
+	// with no summary text, yet still requires the field on replay: a plain string
+	// with omitempty drops it and the request fails with
+	// "thinking.thinking: Field required". nil on redacted blocks, which must not
+	// carry the field at all.
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
+	Data      string  `json:"data,omitempty"`
 }
 
 type anthropicSystemBlock struct {
@@ -364,9 +370,10 @@ func buildAnthropicRequest(opts RequestOptions) (*anthropicRequest, error) {
 						Data: tb.Redacted,
 					})
 				} else {
+					thinking := tb.Thinking
 					antMsg.Content = append(antMsg.Content, anthropicThinkingReqBlock{
 						Type:      "thinking",
-						Thinking:  tb.Thinking,
+						Thinking:  &thinking,
 						Signature: tb.Signature,
 					})
 				}
