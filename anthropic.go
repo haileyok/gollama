@@ -166,6 +166,13 @@ type anthropicUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// OutputTokensDetails breaks output_tokens down; thinking_tokens is the
+	// reasoning portion and is already included in OutputTokens.
+	OutputTokensDetails *anthropicOutputTokensDetails `json:"output_tokens_details"`
+}
+
+type anthropicOutputTokensDetails struct {
+	ThinkingTokens int `json:"thinking_tokens"`
 }
 
 // buildAnthropicRequest converts generic RequestOptions into an Anthropic-native request struct.
@@ -519,6 +526,10 @@ func parseAnthropicResponse(resp *http.Response) (*ResponseMessageGenerate, erro
 // that a streamed turn's final message is byte-equivalent to the non-streaming
 // shape for the same response.
 func convertAnthropicResponse(antResp *anthropicResponse) *ResponseMessageGenerate {
+	var thinkingTokens int
+	if antResp.Usage.OutputTokensDetails != nil {
+		thinkingTokens = antResp.Usage.OutputTokensDetails.ThinkingTokens
+	}
 	result := &ResponseMessageGenerate{
 		Model:      antResp.Model,
 		StopReason: antResp.StopReason,
@@ -528,6 +539,7 @@ func convertAnthropicResponse(antResp *anthropicResponse) *ResponseMessageGenera
 			TotalTokens:              antResp.Usage.InputTokens + antResp.Usage.OutputTokens,
 			CacheCreationInputTokens: antResp.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     antResp.Usage.CacheReadInputTokens,
+			ThinkingTokens:           thinkingTokens,
 		},
 		Choices: []GenChoice{
 			{
