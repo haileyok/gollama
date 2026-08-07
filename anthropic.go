@@ -1,6 +1,7 @@
 package gollama
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -579,6 +580,11 @@ func convertAnthropicResponse(antResp *anthropicResponse) *ResponseMessageGenera
 // ChatCompletionAnthropic sends a request using Anthropic's native API format with caching support.
 // The system prompt and the last user message before each assistant turn are marked for caching.
 func (c *Client) ChatCompletionAnthropic(opts RequestOptions) (*ResponseMessageGenerate, error) {
+	return c.ChatCompletionAnthropicCtx(context.Background(), opts)
+}
+
+// ChatCompletionAnthropicCtx is ChatCompletionAnthropic with caller-controlled cancellation and deadlines.
+func (c *Client) ChatCompletionAnthropicCtx(ctx context.Context, opts RequestOptions) (*ResponseMessageGenerate, error) {
 	req, err := buildAnthropicRequest(opts)
 	if err != nil {
 		return nil, err
@@ -591,7 +597,7 @@ func (c *Client) ChatCompletionAnthropic(opts RequestOptions) (*ResponseMessageG
 	}
 
 	// Send request to Anthropic's native endpoint
-	resp, err := c.prepareRequest(req, c.anthropicEndpoint("/messages"))
+	resp, err := c.prepareRequestCtx(ctx, req, c.anthropicEndpoint("/messages"))
 	if err != nil {
 		return nil, err
 	}

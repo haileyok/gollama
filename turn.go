@@ -1,6 +1,9 @@
 package gollama
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Backend identifies which provider/transport a Client is configured to talk to.
 type Backend int
@@ -58,8 +61,13 @@ func (c *Client) Backend() Backend {
 // to depend on and never have to branch per provider. Streaming is always
 // disabled (the agent loop consumes whole turns).
 func (c *Client) Turn(opts RequestOptions) (*ResponseMessageGenerate, error) {
+	return c.TurnCtx(context.Background(), opts)
+}
+
+// TurnCtx is Turn with caller-controlled cancellation and deadlines.
+func (c *Client) TurnCtx(ctx context.Context, opts RequestOptions) (*ResponseMessageGenerate, error) {
 	opts.Stream = false
-	return c.ChatCompletion(opts)
+	return c.ChatCompletionCtx(ctx, opts)
 }
 
 // TurnStream is the streaming counterpart to Turn: it runs a single model turn
@@ -84,13 +92,18 @@ func (c *Client) Turn(opts RequestOptions) (*ResponseMessageGenerate, error) {
 // assistant text, delivers the whole text as a single snapshot delta. The
 // fallback keeps callers uniform for backends without native SSE.
 func (c *Client) TurnStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
+	return c.TurnStreamCtx(context.Background(), opts, onDelta)
+}
+
+// TurnStreamCtx is TurnStream with caller-controlled cancellation and deadlines.
+func (c *Client) TurnStreamCtx(ctx context.Context, opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
 	switch c.Backend() {
 	case BackendAnthropic:
-		return c.chatCompletionAnthropicStream(opts, onDelta)
+		return c.chatCompletionAnthropicStream(ctx, opts, onDelta)
 	case BackendBedrock:
-		return c.turnStreamFallback(opts, onDelta)
+		return c.turnStreamFallbackCtx(ctx, opts, onDelta)
 	default: // BackendOpenAI, BackendOllama
-		return c.chatCompletionOpenAIStream(opts, onDelta)
+		return c.chatCompletionOpenAIStream(ctx, opts, onDelta)
 	}
 }
 
@@ -98,7 +111,11 @@ func (c *Client) TurnStream(opts RequestOptions, onDelta func(text string)) (*Re
 // path: it runs a blocking Turn and, if that yields non-empty assistant text,
 // delivers the whole text as a single snapshot delta so callers need not branch.
 func (c *Client) turnStreamFallback(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
-	resp, err := c.Turn(opts)
+	return c.turnStreamFallbackCtx(context.Background(), opts, onDelta)
+}
+
+func (c *Client) turnStreamFallbackCtx(ctx context.Context, opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
+	resp, err := c.TurnCtx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}

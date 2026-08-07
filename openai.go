@@ -1,6 +1,7 @@
 package gollama
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -190,14 +191,19 @@ func (c *Client) buildOpenAIRequest(opts RequestOptions) (any, error) {
 // Otherwise, uses the OpenAI-compatible /chat/completions endpoint.
 // Returns a ResponseMessageGenerate with choices and usage information.
 func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, error) {
+	return c.ChatCompletionCtx(context.Background(), opts)
+}
+
+// ChatCompletionCtx is ChatCompletion with caller-controlled cancellation and deadlines.
+func (c *Client) ChatCompletionCtx(ctx context.Context, opts RequestOptions) (*ResponseMessageGenerate, error) {
 	// Use AWS Bedrock endpoint
 	if c.IsBedrockAPI() {
-		return c.ChatCompletionBedrock(opts)
+		return c.ChatCompletionBedrockCtx(ctx, opts)
 	}
 
 	// Use native Anthropic API for caching support
 	if c.IsAnthropicAPI() {
-		return c.ChatCompletionAnthropic(opts)
+		return c.ChatCompletionAnthropicCtx(ctx, opts)
 	}
 
 	body, err := c.buildOpenAIRequest(opts)
@@ -206,7 +212,7 @@ func (c *Client) ChatCompletion(opts RequestOptions) (*ResponseMessageGenerate, 
 	}
 
 	// Set up request for OpenAI-compatible endpoint
-	resp, err := c.prepareRequest(body, "/chat/completions")
+	resp, err := c.prepareRequestCtx(ctx, body, "/chat/completions")
 	if err != nil {
 		return nil, err
 	}

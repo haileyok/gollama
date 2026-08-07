@@ -2,6 +2,7 @@ package gollama
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,7 +67,7 @@ type openaiStreamError struct {
 // across the streaming and non-streaming paths. Reasoning deltas are accumulated
 // but not delivered to onDelta (matching the Anthropic path: thinking is not
 // streamed to onDelta).
-func (c *Client) chatCompletionOpenAIStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
+func (c *Client) chatCompletionOpenAIStream(ctx context.Context, opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
 	opts.Stream = true
 	body, err := c.buildOpenAIRequest(opts)
 	if err != nil {
@@ -75,7 +76,7 @@ func (c *Client) chatCompletionOpenAIStream(opts RequestOptions, onDelta func(te
 
 	// prepareRequest handles pre-stream retryable statuses (429/503/529) exactly
 	// like the non-streaming path; a 200 returns the open SSE body to consume.
-	resp, err := c.prepareRequest(body, "/chat/completions")
+	resp, err := c.prepareRequestCtx(ctx, body, "/chat/completions")
 	if err != nil {
 		return nil, err
 	}

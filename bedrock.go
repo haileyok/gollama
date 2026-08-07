@@ -2,6 +2,7 @@ package gollama
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -74,6 +75,11 @@ func (c *Client) IsBedrockAPI() bool {
 // ChatCompletionBedrock sends a request using AWS Bedrock's invoke model endpoint.
 // It reuses the Anthropic request/response format, signing requests with AWS Signature V4.
 func (c *Client) ChatCompletionBedrock(opts RequestOptions) (*ResponseMessageGenerate, error) {
+	return c.ChatCompletionBedrockCtx(context.Background(), opts)
+}
+
+// ChatCompletionBedrockCtx is ChatCompletionBedrock with caller-controlled cancellation and deadlines.
+func (c *Client) ChatCompletionBedrockCtx(ctx context.Context, opts RequestOptions) (*ResponseMessageGenerate, error) {
 	antReq, err := buildAnthropicRequest(opts)
 	if err != nil {
 		return nil, fmt.Errorf("error building request: %w", err)
@@ -104,7 +110,10 @@ func (c *Client) ChatCompletionBedrock(opts RequestOptions) (*ResponseMessageGen
 	baseDelay := 5 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		httpReq, err := http.NewRequest("POST", fullURL, bytes.NewReader(body))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("error creating request: %w", err)
 		}
@@ -131,7 +140,13 @@ func (c *Client) ChatCompletionBedrock(opts RequestOptions) (*ResponseMessageGen
 		if isRetryableStatus(resp.StatusCode) && attempt < maxRetries {
 			delay := baseDelay * time.Duration(1<<attempt)
 			log.Printf("Bedrock API returned %d, retrying in %v (attempt %d/%d)", resp.StatusCode, delay, attempt+1, maxRetries)
-			time.Sleep(delay)
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			}
 			continue
 		}
 

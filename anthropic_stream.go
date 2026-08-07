@@ -2,6 +2,7 @@ package gollama
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,7 +59,7 @@ type anthropicStreamError struct {
 // returns it via convertAnthropicResponse — the same converter used by the
 // non-streaming path, which guarantees the final message is byte-equivalent to
 // what ChatCompletionAnthropic would have returned for the same response.
-func (c *Client) chatCompletionAnthropicStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
+func (c *Client) chatCompletionAnthropicStream(ctx context.Context, opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error) {
 	req, err := buildAnthropicRequest(opts)
 	if err != nil {
 		return nil, err
@@ -73,7 +74,7 @@ func (c *Client) chatCompletionAnthropicStream(opts RequestOptions, onDelta func
 
 	// prepareRequest handles pre-stream retryable statuses (429/503/529) exactly
 	// like the non-streaming path; a 200 returns the open SSE body to consume.
-	resp, err := c.prepareRequest(req, c.anthropicEndpoint("/messages"))
+	resp, err := c.prepareRequestCtx(ctx, req, c.anthropicEndpoint("/messages"))
 	if err != nil {
 		return nil, err
 	}
