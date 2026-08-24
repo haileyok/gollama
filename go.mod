@@ -1,4 +1,4 @@
-module github.com/whyrusleeping/gollama
+module github.com/haileyok/gollama
 
 go 1.23.4
 
