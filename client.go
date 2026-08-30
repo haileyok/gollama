@@ -58,6 +58,16 @@ func (c *Client) SetTimeout(timeout time.Duration) {
 	c.httpClient.Timeout = timeout
 }
 
+// SetHTTPClient replaces the HTTP client used for requests. This lets callers
+// enforce application-specific transport policies such as private-address
+// blocking, redirect validation, mTLS, or custom observability. A nil client is
+// ignored so request paths never panic after configuration.
+func (c *Client) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		c.httpClient = client
+	}
+}
+
 // effectiveMaxRetries returns the configured transport retry count, or the
 // package default when SetMaxRetries has not been called.
 func (c *Client) effectiveMaxRetries() int {
