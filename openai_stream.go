@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 )
 
@@ -82,7 +83,51 @@ func (c *Client) chatCompletionOpenAIStream(ctx context.Context, opts RequestOpt
 	}
 	defer resp.Body.Close()
 
+	// Some OpenAI-compatible endpoints ignore "stream": true and answer with a
+	// plain JSON completion (seen with user-configured gateways and test stubs).
+	// Detect that via Content-Type and parse it with the non-streaming decoder
+	// instead of the SSE reader, which would otherwise yield an empty response.
+	if !isEventStreamResponse(resp) {
+		response, err := parseOpenAICompletion(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		if onDelta != nil && len(response.Choices) > 0 {
+			if text := response.Choices[0].Message.Content; text != "" {
+				onDelta(text)
+			}
+		}
+		return response, nil
+	}
+
 	return assembleOpenAIStream(resp.Body, onDelta)
+}
+
+// isEventStreamResponse reports whether the response declares an SSE body.
+// Endpoints that honor "stream": true always answer text/event-stream.
+func isEventStreamResponse(resp *http.Response) bool {
+	mediaType := resp.Header.Get("Content-Type")
+	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
+		mediaType = mediaType[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(mediaType), "text/event-stream")
+}
+
+// parseOpenAICompletion decodes a non-streaming /chat/completions response,
+// applying the same reasoning normalization as ChatCompletionCtx.
+func parseOpenAICompletion(body io.Reader) (*ResponseMessageGenerate, error) {
+	var response ResponseMessageGenerate
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("error decoding response: %w", err)
+	}
+	if len(response.Choices) > 0 {
+		msg := &response.Choices[0].Message
+		if msg.Thinking == "" && msg.Reasoning != "" {
+			msg.Thinking = msg.Reasoning
+		}
+		msg.Reasoning = ""
+	}
+	return &response, nil
 }
 
 // assembleOpenAIStream reads an OpenAI-compatible chat-completions SSE body and

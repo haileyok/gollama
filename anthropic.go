@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -505,8 +506,16 @@ func buildAnthropicRequest(opts RequestOptions) (*anthropicRequest, error) {
 // parseAnthropicResponse converts an Anthropic API response into the standard ResponseMessageGenerate format.
 // This is shared by both the direct Anthropic API and the Bedrock API paths.
 func parseAnthropicResponse(resp *http.Response) (*ResponseMessageGenerate, error) {
+	return parseAnthropicResponseBody(resp.Body)
+}
+
+// parseAnthropicResponseBody decodes a non-streaming Anthropic message body
+// into the standard ResponseMessageGenerate format. It is the body-level
+// counterpart of parseAnthropicResponse, reusable by the streaming path's
+// non-SSE fallback.
+func parseAnthropicResponseBody(body io.Reader) (*ResponseMessageGenerate, error) {
 	var antResp anthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&antResp); err != nil {
+	if err := json.NewDecoder(body).Decode(&antResp); err != nil {
 		return nil, fmt.Errorf("error decoding Anthropic response: %w", err)
 	}
 	return convertAnthropicResponse(&antResp), nil

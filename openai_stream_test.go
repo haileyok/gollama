@@ -307,3 +307,53 @@ func TestTurnStreamOllama_NativeStream(t *testing.T) {
 		t.Errorf("snapshots = %v, want [\"Hi there\"]", snaps)
 	}
 }
+
+// TestTurnStreamOpenAI_NonSSEFallback verifies the compatibility fallback: an
+// OpenAI-compatible endpoint that ignores stream:true and answers with a plain
+// JSON completion must still decode correctly through TurnStream, with the full
+// text delivered as one onDelta snapshot, instead of returning the empty
+// response the SSE reader would produce.
+func TestTurnStreamOpenAI_NonSSEFallback(t *testing.T) {
+	var streamed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if v, ok := m["stream"].(bool); ok {
+			streamed = v
+		}
+		// Deliberately application/json, not text/event-stream: this is the
+		// wire shape of an endpoint that ignored stream:true.
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, richOpenAINonStreaming)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	c.SetMaxRetries(0)
+
+	var snaps []string
+	result, err := c.TurnStream(RequestOptions{
+		Model:    "gpt-x",
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}, func(text string) { snaps = append(snaps, text) })
+	if err != nil {
+		t.Fatalf("TurnStream: %v", err)
+	}
+	if !streamed {
+		t.Error("request did not carry stream:true")
+	}
+	msg := result.Choices[0].Message
+	if msg.Content != "Hello, world!" {
+		t.Errorf("content = %q, want %q", msg.Content, "Hello, world!")
+	}
+	if msg.Thinking != "Let me think." {
+		t.Errorf("reasoning fold: thinking=%q", msg.Thinking)
+	}
+	if len(msg.ToolCalls) != 2 || msg.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("tool calls not decoded: %+v", msg.ToolCalls)
+	}
+	if len(snaps) != 1 || snaps[0] != "Hello, world!" {
+		t.Errorf("snapshots = %v, want exactly one full-content snapshot", snaps)
+	}
+}

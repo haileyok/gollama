@@ -80,6 +80,23 @@ func (c *Client) chatCompletionAnthropicStream(ctx context.Context, opts Request
 	}
 	defer resp.Body.Close()
 
+	// An endpoint that ignores "stream": true answers with a plain JSON
+	// message instead of an SSE body. Parse that with the non-streaming
+	// decoder rather than the SSE reader (which would return an empty
+	// response), preserving the exact non-streaming semantics.
+	if !isEventStreamResponse(resp) {
+		converted, err := parseAnthropicResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		if onDelta != nil && len(converted.Choices) > 0 {
+			if text := converted.Choices[0].Message.Content; text != "" {
+				onDelta(text)
+			}
+		}
+		return converted, nil
+	}
+
 	assembled, err := assembleAnthropicStream(resp.Body, onDelta)
 	if err != nil {
 		return nil, err

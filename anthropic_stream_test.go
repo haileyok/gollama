@@ -1,6 +1,7 @@
 package gollama
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -227,5 +228,50 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
 	}
 	if !strings.Contains(err.Error(), "overloaded_error") || !strings.Contains(err.Error(), "Overloaded") {
 		t.Errorf("error should carry type and message; got %v", err)
+	}
+}
+
+// TestTurnStreamAnthropic_NonSSEFallback verifies the compatibility fallback:
+// an Anthropic-shaped endpoint that ignores stream:true and answers with a
+// plain JSON message must still decode correctly through TurnStream, with the
+// full text delivered as one onDelta snapshot, instead of returning the empty
+// response the SSE reader would produce.
+func TestTurnStreamAnthropic_NonSSEFallback(t *testing.T) {
+	var streamed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if v, ok := m["stream"].(bool); ok {
+			streamed = v
+		}
+		// Deliberately application/json, not text/event-stream: this is the
+		// wire shape of an endpoint that ignored stream:true.
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, richAnthropicNonStreaming)
+	}))
+	defer srv.Close()
+	c := anthropicTestClient(t, srv.URL)
+
+	var snaps []string
+	result, err := c.TurnStream(RequestOptions{
+		Model:    "claude-sonnet-4-x",
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}, func(text string) { snaps = append(snaps, text) })
+	if err != nil {
+		t.Fatalf("TurnStream: %v", err)
+	}
+	if !streamed {
+		t.Error("request did not carry stream:true")
+	}
+	msg := result.Choices[0].Message
+	if msg.Content != "Hello, world!" {
+		t.Errorf("content = %q, want %q", msg.Content, "Hello, world!")
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("tool calls not decoded: %+v", msg.ToolCalls)
+	}
+	if len(snaps) != 1 || snaps[0] != "Hello, world!" {
+		t.Errorf("snapshots = %v, want exactly one full-content snapshot", snaps)
 	}
 }
