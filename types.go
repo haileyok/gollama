@@ -49,9 +49,18 @@ type RequestOptions struct {
 	// Effort controls reasoning depth and overall token spend on backends that
 	// support it: "low" | "medium" | "high" | "xhigh" | "max". Anthropic maps it
 	// to output_config.effort; OpenAI-compatible backends map it to
-	// reasoning_effort ("max" clamps to "xhigh"). Ignored by Ollama (on/off only)
-	// and Bedrock. Empty uses the provider default.
+	// reasoning_effort. Ignored by Ollama (on/off only) and Bedrock. Empty uses
+	// the provider default.
+	//
+	// "max" is only legal on OpenAI's own models up to "xhigh"; on OpenAI-compatible
+	// endpoints that define a real "max" tier it is passed through when
+	// EffortPassthrough is set. See mapOpenAIEffort.
 	Effort string `json:"-"`
+	// EffortPassthrough sends "max" through unchanged instead of clamping it to
+	// "xhigh" on the OpenAI-compatible path. Set it for endpoints whose own
+	// vocabulary includes "max" (DeepSeek V4, Kimi K3, GLM); leave it unset for
+	// OpenAI proper. No effect on Anthropic, Bedrock, or Ollama.
+	EffortPassthrough bool `json:"-"`
 	// ThinkingDisplay selects whether thinking summaries are returned
 	// ("summarized") or omitted (the provider default). Anthropic only.
 	ThinkingDisplay string         `json:"-"`

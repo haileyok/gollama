@@ -64,8 +64,19 @@ type openaiStreamOptions struct {
 // OpenAI documents none|minimal|low|medium|high|xhigh (model-dependent). "max"
 // has no OpenAI equivalent, so it clamps to the highest expressible level,
 // "xhigh"; anything else passes through unchanged.
-func mapOpenAIEffort(effort string) string {
-	if effort == "max" {
+// mapOpenAIEffort rewrites an effort level into the spelling the target expects.
+//
+// OpenAI's own reasoning models top out at "xhigh" and reject "max" with a 400,
+// which is why the rewrite exists at all. "max" is a real level for a number of
+// endpoints behind this same OpenAI-compatible path, though — DeepSeek V4
+// (low/high/max) and Kimi K3 (low/high/max) both accept it, and for Kimi it is
+// the model's own default, so clamping it would make the default unreachable.
+//
+// The caller decides which spelling applies via RequestOptions.EffortPassthrough,
+// because a level string alone cannot distinguish "OpenAI, where max is illegal"
+// from "an OpenAI-compatible endpoint, where max is the top tier".
+func mapOpenAIEffort(effort string, passthrough bool) string {
+	if effort == "max" && !passthrough {
 		return "xhigh"
 	}
 	return effort
@@ -152,7 +163,8 @@ func (c *Client) buildOpenAIRequest(opts RequestOptions) (any, error) {
 
 	// Translate reasoning controls per backend. Both backends flow through this
 	// OpenAI-compatible path, but they express reasoning differently:
-	//   - OpenAI: a reasoning_effort level (from Effort; "max" clamps to xhigh).
+	//   - OpenAI: a reasoning_effort level (from Effort; "max" clamps to xhigh
+	//     unless EffortPassthrough says the target accepts "max" natively).
 	//     There is no OpenAI request equivalent for Thinking — Effort is the knob.
 	//   - Ollama: a think on/off bool only (no effort levels). It is enabled when
 	//     Think is set or an adaptive Thinking is requested; Effort is ignored.
@@ -163,7 +175,7 @@ func (c *Client) buildOpenAIRequest(opts RequestOptions) (any, error) {
 		}
 	default: // BackendOpenAI and other OpenAI-compatible endpoints
 		if opts.Effort != "" {
-			req.ReasoningEffort = mapOpenAIEffort(opts.Effort)
+			req.ReasoningEffort = mapOpenAIEffort(opts.Effort, opts.EffortPassthrough)
 		}
 	}
 

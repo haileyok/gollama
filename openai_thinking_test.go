@@ -65,21 +65,26 @@ func openaiTestClient(t *testing.T, url string) *Client {
 }
 
 // TestOpenAIReasoningEffort verifies that RequestOptions.Effort is translated
-// into the OpenAI reasoning_effort request field, that "max" clamps to "xhigh",
-// that an empty Effort omits the key, and that the Ollama-only "think" key is
-// never present for the OpenAI backend.
+// into the OpenAI reasoning_effort request field, that "max" clamps to "xhigh"
+// for OpenAI but passes through when EffortPassthrough is set, that an empty
+// Effort omits the key, and that the Ollama-only "think" key is never present
+// for the OpenAI backend.
 func TestOpenAIReasoningEffort(t *testing.T) {
 	cases := []struct {
-		name       string
-		effort     string
-		wantEffort string // "" means the key must be absent
+		name        string
+		effort      string
+		passthrough bool
+		wantEffort  string // "" means the key must be absent
 	}{
-		{"low passes through", "low", "low"},
-		{"medium passes through", "medium", "medium"},
-		{"high passes through", "high", "high"},
-		{"xhigh passes through", "xhigh", "xhigh"},
-		{"max clamps to xhigh", "max", "xhigh"},
-		{"empty omits key", "", ""},
+		{"low passes through", "low", false, "low"},
+		{"medium passes through", "medium", false, "medium"},
+		{"high passes through", "high", false, "high"},
+		{"xhigh passes through", "xhigh", false, "xhigh"},
+		{"max clamps to xhigh", "max", false, "xhigh"},
+		{"max passes through when allowed", "max", true, "max"},
+		{"passthrough leaves other levels alone", "high", true, "high"},
+		{"empty omits key", "", false, ""},
+		{"empty omits key with passthrough", "", true, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,10 +97,11 @@ func TestOpenAIReasoningEffort(t *testing.T) {
 			}
 
 			if _, err := c.Turn(RequestOptions{
-				Model:    "gpt-5.1",
-				Messages: []Message{{Role: "user", Content: "hi"}},
-				Effort:   tc.effort,
-				Thinking: "adaptive", // must NOT produce think on OpenAI
+				Model:             "gpt-5.1",
+				Messages:          []Message{{Role: "user", Content: "hi"}},
+				Effort:            tc.effort,
+				EffortPassthrough: tc.passthrough,
+				Thinking:          "adaptive", // must NOT produce think on OpenAI
 			}); err != nil {
 				t.Fatalf("Turn: %v", err)
 			}
